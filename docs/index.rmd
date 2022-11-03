@@ -1,0 +1,372 @@
+---
+title: Animation in R
+author : Tadesse Habte
+output:
+    prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+    css: styles.css
+  # rmarkdown::html_document:
+    # theme: lumen
+    # toc: true
+    # toc_float:
+    #   collapsed: false
+    #   smooth_scroll: false
+    
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = FALSE) 
+```
+
+```{r addLibrary, include=FALSE}
+
+library(tidyverse)
+#library(dplyr)
+library(lubridate)
+library(knitr)
+library(gganimate)
+library(animation)
+library(ggplot2)
+library(DT)
+library(gridExtra)
+library(insight)
+library(gt)
+library(scales)
+library(ggrepel)
+library(data.table)
+library(httr)
+library(jsonlite)
+library(countrycode)
+library(maps)
+library(maptools)
+library(transformr)
+library(unhcRstyle)
+library(av)# save video
+
+```
+
+
+```{r load_clean_data, echo=FALSE}
+
+# download data using unhcrdatapackage 
+#https://github.com/Edouard-Legoupil/unhcrdatapackage
+
+population=unhcrdatapackage::end_year_population_totals
+code=unhcrdatapackage::reference%>%
+  select(iso_3,UNHCRBureau)
+population=merge(population,code,by.x = "CountryAsylumCode",by.y = "iso_3",all.x = T)
+
+# Let's shorten long country names in all columns
+population[population == "United Kingdom of Great Britain and Northern Ireland"] <- "UK"
+population[population == "Iran (Islamic Republic of)"] <- "Iran"
+population[population == "United Republic of Tanzania"] <- "Tanzania"
+population[population == "Venezuela (Bolivarian Republic of)"] <- "Venezuela"
+population[population == "Republic of North Macedonia"] <- "North Macedonia"
+population[population == "China, Hong Kong Special Administrative Region"] <- "China"
+population[population == "Republic of Moldova"] <- "Moldova"
+population[population =="Democratic Republic of the Congo"]<-"Congo DR"
+population[population =="Syrian Arab Republic"]<-"Syria"
+population[population =="United States of America"]<-"USA"
+population[population =="Central African Republic"]<-"CAR"
+
+population$CountryOriginName<-as.factor(population$CountryOriginName)
+population$CountryOriginCode<-as.factor(population$CountryOriginCode)
+population$CountryAsylumName<-as.factor(population$CountryAsylumName)
+population$CountryAsylumCode<-as.factor(population$CountryAsylumCode)
+
+population<-population%>%
+  select(-CountryAsylumCode,-CountryOriginCode)
+
+```
+
+I have seen animation of plots on YouTube and some other websites
+and wondered If this can be achieved using R. I finally got
+introduced to [gganmiate](https://gganimate.com/) and 
+[animate](https://yihui.org/animation/) ! 
+I will produce couple of animation and explain what I learned.
+
+:::: {style="display: flex;"}
+
+:::{}
+
+Good visualization, like animation, gives good impression 
+but more importantly it should be engaging and ensure <br />
+audience understand the message.\
+
+To create animation of plots, after you prepare your data,
+you are creating many plots(depends on your query and data size)<br />
+and join or sew these frames together. You remember those
+[Flip Book Animation](https://www.youtube.com/watch?v=Njl-uqnmBGA)? Exactly!<br />
+:::
+
+:::{}
+
+```{r}
+
+df_idp=population%>%group_by(Year)%>%filter(Year>2000)%>%
+  summarise(IDPs=sum(IDP))
+
+plt_IDPs=ggplot(data=df_idp,mapping=aes(x=Year,y=IDPs))+
+  geom_bar(stat="identity",fill='#0072BC')+
+  scale_y_continuous(labels = label_number(scale_cut = cut_short_scale()))+
+  #scale_y_continuous(labels = scales::label_number_si())+
+  scale_x_continuous(labels=as.character(df_idp$Year),breaks=df_idp$Year)+
+  theme(axis.title.y = element_blank(),
+        axis.text.x = element_text(angle=90, hjust=1,size = 10))+
+  labs(title = 'IDP situtation',
+        caption  = "Data Source:UNHCR"
+       )+
+  transition_states(Year, transition_length = 4, state_length = 1)+
+  shadow_mark() #keep all past data points
+
+animate(plt_IDPs,nframe=length(unique(df_idp$Year)),fps=2,detail=2,renderer = gifski_renderer("plt_IDPs.gif"))
+# save as video
+# b <- animate(plt_IDPs, fps=4, renderer = av_renderer())
+# anim_save("Idp_situation.mp4", b)
+
+
+
+```
+
+:::
+
+:::::
+
+[Getting Started](https://cran.r-project.org/web/packages/gganimate/vignettes/gganimate.html)
+
+## Animation of bar chart 
+
+Let's create animation of bar chart. First let's get sample and see what our dataframe looks like, couple of rows will be enough to show.
+
+```{r}
+#export_table(head(population,5), format = "html")
+export_table(sample_n(population, 5), format = "html")
+
+```
+Let's get ranked dataframe, top 10 countries for each year.
+
+```{r rankDf, echo=TRUE}
+
+refugee_ranked <-population%>%
+  filter(Year>1979)%>%
+  group_by(Year,CountryOriginName)%>%
+  summarise(Tot=sum(REF+ASY))%>%
+ #min_rank is alternative function  but there will be no ties, the same in the rank :) and by multiplying by 1,we should get non integer rank
+  mutate(rank = rank(-Tot) * 1) %>% 
+  filter(rank <=10)#%>% # Do you want to the top 10 countries ?
+  #ungroup()
+```
+
+The idea is to create animation of top 10 nationalities(Refugee or Asylum-seekers) from 1980 to 2021, 41 years. To achieve this:
+you first create simple static plots based on their rank. Technically speaking,you create plots from year  1980 to 2021, as plots or frames. Then the next step is to apply the [transition states](https://gganimate.com/reference/transition_states.html) that applies the transition between several distinct stages(the year in our case) of the our data like [Flip Book Animation](https://www.youtube.com/watch?v=Njl-uqnmBGA).  
+When we go to our project, we then need to create the ggplot and add [transition state](https://gganimate.com/reference/transition_states.html).
+
+```{r animate-bar-chart, out.width='70%', out.height='70%', echo=TRUE, fig.cap="Data source : [unhcrdatapackage](https://github.com/Edouard-Legoupil/unhcrdatapackage)"}
+
+plt_displacement<-ggplot(refugee_ranked, 
+  aes(rank, group = CountryOriginName, #'group' helps to track frames
+                     fill = as.factor(CountryOriginName))) +
+    geom_tile(aes(y = Tot/2,height = Tot,width = 0.9), alpha = 0.8, color = NA) +
+  # Make some space : paste(CountryOriginName, " ")
+  geom_text(aes(y = 0, label = paste(CountryOriginName, " ")), vjust = 0.6, hjust = 1.1,size=3) + 
+  # geom_text(aes(y=Tot,label = label_number(scale_cut = cut_short_scale())),vjust=0,size=3)+# test
+  geom_text(aes(y=Tot,label = format(Tot, big.mark = ",", scientific = FALSE)),vjust=0,size=3)+
+  coord_flip(clip = "off", expand = FALSE) +
+  scale_y_continuous(labels = scales::label_number_si())+
+  scale_x_reverse() +
+  guides(color = FALSE, fill = FALSE) + #  set scale-by-scale guide off , there is not need for legend 
+  labs(title = 'Refugees & Asylum-seekers : {closest_state}',  # similar like faceting by time (year). Helps to indicates what each point is related to.
+        subtitle  =  "Top 10 Nationalities")+
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0, size = 22),
+        axis.ticks.y  = element_blank(),axis.text.y  = element_blank(),axis.title.y = element_blank(),axis.title.x =element_blank(),plot.margin = margin(0.5,1,1,4, "cm")
+        #plot.margin = margin(2,2, 2, 4, "cm")
+        ) +
+  transition_states(Year, transition_length = 4, state_length = 1) +
+  ease_aes('cubic-in-out')# ease_aes() aesthetic helps to control the rate of change between the transition states
+  # You can adjust the animation settings
+animate(plt_displacement, fps = 4, # frames per second,
+      # width = 1200,height = 1000,
+       renderer = gifski_renderer("plt_displacement.gif")# gifski_renderer() takes list of images & construct them into an animation
+       #, end_pause = 15, start_pause =  15s
+       )
+#You want to save animations? Use anim_save()
+# anim_save("plt_displacement.gif", plt_displacement)
+
+```
+
+## Animation of line chart
+
+Line chart animation is not different from the others. After building the chart add aesthetics **transition_...()** that will give variable to your frame .
+
+:::: {style="display: flex;"}
+
+:::{}
+
+```{r animate-line-chart}
+
+df=population%>%
+  group_by(Year)%>%
+  summarise(Refugee=sum(REF),Asylum_seekers=sum(ASY),IDP=sum(IDP),OOC=sum(OOC))
+
+df_tidy=df%>%
+  gather(Status,Value,-Year)
+
+myplot1=df_tidy%>%
+  ggplot(aes(Year, Value, color = Status)) +
+  geom_line() +
+  geom_point(size = 3) +
+  geom_text_repel(aes(label = Status),
+    hjust = 0,size = 3,
+    nudge_x = 2,
+    direction = "y",
+    xlim = c(NA, Inf)
+  ) +
+  scale_y_continuous(labels = scales::label_number_si())+
+  guides(color = "none") +
+  coord_cartesian(clip = "off") +
+  labs(title = 'Displacement Trend', y = 'Persons') + 
+  theme_minimal() + 
+  transition_reveal(Year)
+
+animate(myplot1, fps = 4, renderer = gifski_renderer("plt_displacement.gif"))
+
+```
+
+:::
+
+:::{}
+
+```{r}
+
+myplot2=ggplot(df_tidy, aes(Year, Value, group = Status,color = Status)) + 
+  geom_line() + 
+  geom_segment(aes(xend = 2021, yend = Value), linetype = 2, colour = 'grey') + 
+  geom_point(size = 2) + 
+  geom_text(aes(x = 2021.5, label = Status), hjust = 0) +
+  scale_y_continuous(labels = scales::label_number_si())+
+  guides(color = "none") +
+  transition_reveal(Year) + 
+  coord_cartesian(clip = 'off') + 
+  #labs(title = 'Displacement Trend') + 
+  theme_minimal() + 
+  theme(plot.margin = margin(5.5, 40, 5.5, 5.5),axis.title.y = element_blank())
+
+animate(myplot2, fps = 4,renderer = gifski_renderer("a.gif") 
+        )
+```
+
+:::
+
+::::
+
+## Animation and map 
+
+How about using map to show border crossings figure from Ukraine 
+from 24 February to 30 September ?
+The idea is the same: create the map and use the figure as a label on certain point or the city (lat. & long.) then show every state the same as the one we saw above.
+
+
+```{r mapping, fig.cap="Data source: [UNHCR](https://data.unhcr.org/en/situations/ukraine)"}
+
+#GeoId of neighbouring countries
+Moldova=680
+Poland=712
+Hungary=649
+Belarus=595
+Russia=718
+Romania=716
+Slovakia=734
+
+# list of neighbouring countries
+borader_CAO_list=list (c(Moldova,Poland,Hungary,Belarus,Russia,Romania,Slovakia))
+
+df_UKR=table = data.frame()
+
+# UNHCR ODP portal link (Replace with the geo_id referred as geoReplace with the country code and iterate
+u="https://data.unhcr.org/population/get/timeseries?widget_id=306561&geo_id=geoReplace&sv_id=54&population_group=5461&frequency=day&fromDate=1900-01-01"
+
+for(i in borader_CAO_list)
+  {
+  for(j in i)
+  {
+    url=str_replace_all(u, "geoReplace",as.character(j))
+    res = GET(url)
+    data = fromJSON(rawToChar(res$content))
+    COA=data$data$geoMasterId$name
+    df_UKR_n=data$data$timeseries
+    df_UKR_n$COA=COA
+    df_UKR=rbind(df_UKR, df_UKR_n)
+    
+    }
+}
+
+df_UKR=df_UKR%>%
+  mutate(ISO3=case_when(COA=="Belarus"~ "BLR",
+                        COA=="Poland"~"POL",
+                        COA=="Slovakia"~"SVK",
+                        COA=="Hungary"~"HUN",
+                        COA=="Russian Federation"~"RUS",
+                        COA=="Romania"~"ROU",
+                        COA=="Republic of Moldova"~"MDA"))
+
+ 
+df_UKR$data_date=as.Date(df_UKR$data_date, "%Y-%m-%d")
+df_UKR=df_UKR%>%
+  filter(data_date< as.Date("2022-10-01"))
+ 
+data("world.cities")
+df = world.cities
+data(wrld_simpl)
+
+capital=df%>%
+  filter(country.etc %in% c("Ukraine","Poland","Russia","Slovakia","Belarus","Romania","Moldova","Hungary"),capital==1)%>% 
+  mutate(ISO3=case_when(country.etc %like% "Belarus"~ "BLR",
+                        country.etc %like% "Poland"~"POL",
+                        country.etc %like% "Slovakia"~"SVK",
+                        country.etc %like% "Hungary"~"HUN",
+                        country.etc %like% "Russia"~"RUS",
+                        country.etc %like% "Romania"~"ROU",
+                        country.etc %like% "Moldova"~"MDA",
+                        country.etc %like% "Ukraine"~"UKR"))
+
+
+thismap = map_data("world")
+thismap=thismap%>%
+  filter(grepl("Ukraine|Poland|Russia|Slovakia|Belarus|Romania|Moldova|Hungary",region) )
+
+# To set colors
+thismap = mutate(thismap, fill = ifelse(region %in% c("Ukraine"), "red", "white"))
+
+# Use scale_fiil_identity to set the right colors, if needed
+df_UKR=full_join(df_UKR, capital, by = "ISO3")
+p=ggplot() +
+  geom_polygon(data = thismap , aes(x = long, y = lat, group = group), fill=thismap$fill, color = 'black')+
+  #scale_fill_identity()+
+  #geom_point(data = df_UKR, aes(x = long, y = lat), color = 'red', size = 0.5)+
+  geom_text(data=df_UKR,aes(x=long, y=lat), label=format(df_UKR$individuals,big.mark=",",scientific = FALSE), colour = "blue",size=3)+
+  annotate(geom="text", x=30, y=50, label="Ukraine",
+              color="white")+
+  coord_cartesian(xlim=c(10, 70), ylim = c(40, 57))+ #zoom xlim=c(0, 80), ylim = c(38, 60)
+  scale_fill_identity()+
+  labs(title = 'Border crossings from Ukraine: {closest_state}',
+        subtitle  =  "Cumilative data(sample) 24 Feb- 31 Aug 2022"
+        #,caption  = " Data Source: UNHCR"
+        ) +
+  transition_states(as_date(as_datetime(df_UKR$unix_timestamp)), transition_length = 4, state_length = 1) +
+  ease_aes('cubic-in-out')
+
+animate(
+  plot = p, 
+  nframes = length(unique(df_UKR$data_date)), 
+  fps = 4, 
+  detail = 4, # detail came as a rescue to show every state is printed
+  end_pause = 8
+)
+
+```
+
+
+
+
